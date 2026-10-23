@@ -1,0 +1,54 @@
+#!/bin/bash
+# 机械防护，与 AGENTS.md 第 3 节对应。不依赖任何 agent 自觉。
+# 误报时可用 git commit --no-verify 绕过。
+
+set -u
+
+MAX_BYTES=$((5 * 1024 * 1024))
+fail=0
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+git diff --cached --name-only -z --diff-filter=ACMRT > "$tmp" || exit 1
+
+# 1) 大文件
+while IFS= read -r -d '' f; do
+  [ -n "$f" ] || continue
+  size=$(git cat-file -s ":$f") || exit 1
+  if [ "$size" -gt "$MAX_BYTES" ]; then
+    echo "pre-commit: 拒绝 >5MB 文件: $f ($(( size / 1024 / 1024 )) MB)" >&2
+    fail=1
+  fi
+done < "$tmp"
+
+# 2) data/ 路径
+data_files=()
+while IFS= read -r -d '' f; do
+  case "$f" in
+    data/*) data_files+=("$f") ;;
+  esac
+done < "$tmp"
+if [ "${#data_files[@]}" -gt 0 ]; then
+  echo "pre-commit: 拒绝提交 data/ 下的文件（该目录约 31GB，见 AGENTS.md 第 3 节）:" >&2
+  printf '    %s\n' "${data_files[@]:0:5}" >&2
+  fail=1
+fi
+
+# 3) 密钥模式（只看暂存内容，跳过二进制）
+while IFS= read -r -d '' f; do
+  [ -n "$f" ] || continue
+  case "$f" in
+    *.png|*.jpg|*.jpeg|*.gif|*.webp|*.pt|*.npz|*.safetensors|*.pyc) continue ;;
+  esac
+  if git show ":$f" 2>/dev/null | grep -qE 'sk-[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY'; then
+    echo "pre-commit: 疑似密钥/私钥: $f" >&2
+    fail=1
+  fi
+done < "$tmp"
+
+if [ "$fail" -ne 0 ]; then
+  echo "" >&2
+  echo "提交已阻止。确认误报可用: git commit --no-verify" >&2
+  exit 1
+fi
+exit 0

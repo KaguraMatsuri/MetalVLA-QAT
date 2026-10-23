@@ -1,0 +1,13 @@
+# Local data and model artifacts (~31 GB: weights, NPZ, videos, rollouts, metrics)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.vscode/

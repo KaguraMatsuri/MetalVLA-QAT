@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MuJoCo</title>
+<style nonce="__NONCE__">
+  :root { font: 16px system-ui, sans-serif; color-scheme: light dark; }
+  body { max-width: 1060px; margin: 32px auto; padding: 0 20px; }
+  h1 { font-size: 24px; }
+  form { display: grid; gap: 14px; max-width: 640px; }
+  label { display: grid; gap: 6px; }
+  input, button { font: inherit; padding: 10px 12px; border: 1px solid #888; border-radius: 6px; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .55; }
+  .buttons { display: flex; gap: 10px; }
+  .cameras { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 24px; }
+  figure { margin: 0; }
+  img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #222; }
+  [hidden] { display: none !important; }
+  figcaption { margin-top: 6px; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: light-dark(#f2f3f5, #222); border-radius: 6px; }
+</style>
+<h1>MuJoCo</h1>
+<form id="connection" autocomplete="off">
+  <label>接口地址<input id="base_url" name="base_url" type="url" required maxlength="2048" spellcheck="false"></label>
+  <label>模型名<input id="model" name="model" required maxlength="256" spellcheck="false"></label>
+  <label>API Key<input id="api_key" name="api_key" type="password" required maxlength="8192" autocomplete="off"></label>
+  <div class="buttons">
+    <button id="start" type="submit">试试看</button>
+    <button id="stop" type="button" disabled>停止</button>
+  </div>
+</form>
+<div class="cameras">
+  <figure><img id="camera0" alt="overhead" hidden><figcaption>overhead</figcaption></figure>
+  <figure><img id="camera1" alt="wrist" hidden><figcaption>wrist</figcaption></figure>
+  <figure><img id="camera2" alt="side" hidden><figcaption>side</figcaption></figure>
+</div>
+<pre id="status" role="status" aria-live="polite"></pre>
+<script nonce="__NONCE__">
+  "use strict";
+  const token = location.hash.slice(1);
+  const form = document.getElementById("connection");
+  const start = document.getElementById("start");
+  const stop = document.getElementById("stop");
+  const status = document.getElementById("status");
+  let version = -1;
+  let sending = false;
+  let running = false;
+  let localError = null;
+
+  async function call(path, body) {
+    const options = {headers: {"X-Session-Token": token}, cache: "no-store"};
+    if (body !== undefined) {
+      options.method = "POST";
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(path, options);
+    const value = await response.json();
+    if (!response.ok) throw value;
+    return value;
+  }
+
+  function show(value) {
+    if (value.frames) {
+      for (let i = 0; i < 3; i++) {
+        const image = document.getElementById("camera" + i);
+        image.hidden = !value.frames[i];
+        if (value.frames[i]) image.src = value.frames[i];
+        else image.removeAttribute("src");
+      }
+      version = value.frame_version;
+      delete value.frames;
+    }
+    running = ["initializing", "observing", "waiting_api", "executing", "stopping"].includes(value.phase);
+    for (const input of form.querySelectorAll("input")) input.disabled = running || sending;
+    start.disabled = running || sending;
+    stop.disabled = !running || sending;
+    status.textContent = JSON.stringify(localError ? {...value, input_error: localError} : value, null, 2);
+  }
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (sending || running) return;
+    sending = true;
+    localError = null;
+    start.disabled = true;
+    const body = Object.fromEntries(new FormData(form));
+    try {
+      const value = await call("/run", body);
+      document.getElementById("api_key").value = "";
+      show(value);
+    } catch (error) {
+      localError = error.error || {code: "local_connection_error"};
+    } finally {
+      body.api_key = "";
+      sending = false;
+      await refresh();
+    }
+  });
+
+  stop.addEventListener("click", async () => {
+    stop.disabled = true;
+    try { show(await call("/stop", {})); }
+    catch (error) { localError = error.error || {code: "local_connection_error"}; }
+    await refresh();
+  });
+
+  async function refresh() {
+    try { show(await call("/state?since=" + version)); }
+    catch (error) { status.textContent = JSON.stringify(error.error || {code: "local_connection_error"}); }
+  }
+
+  (async () => {
+    try { document.getElementById("base_url").value = (await call("/config")).base_url; }
+    catch (error) { localError = error.error || {code: "local_connection_error"}; }
+    await refresh();
+    setInterval(refresh, 500);
+  })();
+</script>
+</html>

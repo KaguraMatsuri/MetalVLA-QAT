@@ -1,0 +1,8 @@
+mlx==0.32.3
+torch==2.11.0
+transformers==5.17.0
+safetensors==0.8.0
+numpy==2.2.6
+pillow==12.3.0
+mujoco==3.14.0
+mujoco-menagerie==2026.9.1
